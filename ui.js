@@ -144,6 +144,88 @@ function renderMacroCard({ label, consumed, goal, kcalFactor, view, toneClass, p
   </article>`;
 }
 
+
+function safePositive(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function habitProgress(value, goal) {
+  if (!goal || goal <= 0) return 0;
+  return Math.max(0, Math.min(1, value / goal));
+}
+
+function createHabitCard({
+  title,
+  valueText,
+  progress,
+  actions,
+  disabled
+}) {
+  const card = document.createElement('article');
+
+  const titleEl = document.createElement('strong');
+  titleEl.textContent = title;
+
+  const valueEl = document.createElement('p');
+  valueEl.className = 'muted tiny';
+  valueEl.textContent = valueText;
+
+  const progressEl = document.createElement('progress');
+  progressEl.max = 1;
+  progressEl.value = progress;
+
+  const actionRow = document.createElement('div');
+  actionRow.className = 'row-actions habit-actions';
+  actions.forEach((action) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'secondary';
+    btn.dataset.action = action.action;
+    btn.textContent = action.label;
+    btn.disabled = Boolean(disabled);
+    actionRow.appendChild(btn);
+  });
+
+  card.append(titleEl, valueEl, progressEl, actionRow);
+  return card;
+}
+
+function renderDashboardHabits(container, habits) {
+  if (!container) return;
+  container.innerHTML = '';
+
+  const waterMl = safePositive(habits?.waterMl);
+  const waterGoalMl = safePositive(habits?.waterGoalMl || 2000);
+  const exerciseMinutes = safePositive(habits?.exerciseMinutes);
+  const exerciseGoalMinutes = safePositive(habits?.exerciseGoalMinutes || 30);
+  const disabled = !habits?.canLog;
+
+  const waterCard = createHabitCard({
+    title: 'Water',
+    valueText: `${Math.round(waterMl)} ml / ${Math.round(waterGoalMl)} ml`,
+    progress: habitProgress(waterMl, waterGoalMl),
+    actions: [
+      { action: 'add-water-250', label: '+250 ml' },
+      { action: 'add-water-500', label: '+500 ml' }
+    ],
+    disabled
+  });
+
+  const exerciseCard = createHabitCard({
+    title: 'Exercise',
+    valueText: `${Math.round(exerciseMinutes)} min / ${Math.round(exerciseGoalMinutes)} min`,
+    progress: habitProgress(exerciseMinutes, exerciseGoalMinutes),
+    actions: [
+      { action: 'add-exercise-10', label: '+10 min' },
+      { action: 'add-exercise-20', label: '+20 min' }
+    ],
+    disabled
+  });
+
+  container.append(waterCard, exerciseCard);
+}
+
 export function renderDashboard(person, date, entries, options = {}) {
   const totals = sumEntries(entries);
   const consumedKcal = Math.round(totals.kcal);
@@ -188,19 +270,18 @@ export function renderDashboard(person, date, entries, options = {}) {
 
     <section class="habits-card">
       <h3>Healthy Habits</h3>
-      <div class="habit-grid">
-        <article>
-          <strong>Water</strong>
-          <p class="muted tiny">Placeholder: water tracking coming soon.</p>
-        </article>
-        <article>
-          <strong>Exercise</strong>
-          <p class="muted tiny">Placeholder: exercise tracking coming soon.</p>
-        </article>
-      </div>
+      <div id="dashboardHabits" class="habit-grid"></div>
     </section>
     <p class="muted">Date: ${date}</p>
   `;
+
+  renderDashboardHabits(el('dashboardHabits'), {
+    waterMl: options.habits?.waterMl,
+    exerciseMinutes: options.habits?.exerciseMinutes,
+    waterGoalMl: options.habits?.waterGoalMl || 2000,
+    exerciseGoalMinutes: options.habits?.exerciseGoalMinutes || 30,
+    canLog: options.habits?.canLog !== false
+  });
 
   el('entriesTableContainer').innerHTML = entries.length
     ? `<table>
@@ -236,7 +317,8 @@ export function renderSettingsPersons(persons) {
       <div>
         <strong>${p.name}</strong><br />
         <span>${p.kcalGoal} kcal/day</span><br />
-        <span class="muted">P:${p.macroTargets?.p ?? '—'} C:${p.macroTargets?.c ?? '—'} F:${p.macroTargets?.f ?? '—'}</span>
+        <span class="muted">P:${p.macroTargets?.p ?? '—'} C:${p.macroTargets?.c ?? '—'} F:${p.macroTargets?.f ?? '—'}</span><br />
+        <span class="muted">Water:${p.waterGoalMl ?? 2000}ml Exercise:${p.exerciseGoalMin ?? 30}min</span>
       </div>
       <div class="settings-actions">
         <button class="secondary" data-action="edit-person" data-person-id="${p.id}">Edit</button>
@@ -254,6 +336,8 @@ export function fillPersonForm(person) {
   el('personMacroP').value = person?.macroTargets?.p ?? '';
   el('personMacroC').value = person?.macroTargets?.c ?? '';
   el('personMacroF').value = person?.macroTargets?.f ?? '';
+  el('personWaterGoalMl').value = person?.waterGoalMl ?? 2000;
+  el('personExerciseGoalMin').value = person?.exerciseGoalMin ?? 30;
   el('cancelEditBtn').hidden = !person;
 }
 
@@ -272,7 +356,9 @@ export function readPersonForm() {
       p: parseOptional(el('personMacroP').value),
       c: parseOptional(el('personMacroC').value),
       f: parseOptional(el('personMacroF').value)
-    }
+    },
+    waterGoalMl: Math.max(250, Number(el('personWaterGoalMl').value) || 2000),
+    exerciseGoalMin: Math.max(5, Number(el('personExerciseGoalMin').value) || 30)
   };
 }
 
@@ -440,4 +526,185 @@ export function renderScanResult(product) {
       <button type="button" id="logScannedProductBtn">Log via portion picker</button>
     </div>
   </article>`;
+}
+
+function macroPer100FromAny(nutrition = {}) {
+  return {
+    kcal: Number(nutrition.kcal100g),
+    protein: Number(nutrition.p100g),
+    carbs: Number(nutrition.c100g),
+    fat: Number(nutrition.f100g)
+  };
+}
+
+export function renderMealTemplates(mealTemplates = []) {
+  const wrap = el('mealTemplatesRow');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+
+  const newBtn = document.createElement('button');
+  newBtn.type = 'button';
+  newBtn.className = 'secondary meal-template-card';
+  newBtn.dataset.action = 'new-meal-template';
+  const title = document.createElement('strong');
+  title.textContent = '+ New Meal';
+  const hint = document.createElement('span');
+  hint.className = 'muted tiny';
+  hint.textContent = 'Create a reusable template';
+  newBtn.append(title, hint);
+  wrap.appendChild(newBtn);
+
+  mealTemplates.forEach((template) => {
+    const totalKcal = (template.items || []).reduce((sum, item) => {
+      const grams = Number(item?.gramsDefault || 0);
+      const per100 = Number(item?.per100g?.kcal || 0);
+      if (!Number.isFinite(grams) || !Number.isFinite(per100)) return sum;
+      return sum + (grams / 100) * per100;
+    }, 0);
+
+    const card = document.createElement('div');
+    card.className = 'meal-template-card-shell';
+
+    const logBtn = document.createElement('button');
+    logBtn.type = 'button';
+    logBtn.className = 'meal-template-card';
+    logBtn.dataset.action = 'log-meal-template';
+    logBtn.dataset.templateId = template.id;
+
+    const h = document.createElement('strong');
+    h.textContent = String(template.name || 'Unnamed meal');
+    const meta = document.createElement('span');
+    meta.className = 'muted tiny';
+    meta.textContent = `${(template.items || []).length} items • ${Math.round(totalKcal)} kcal`;
+    logBtn.append(h, meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'meal-template-actions';
+
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'secondary tiny-action';
+    editBtn.dataset.action = 'edit-meal-template';
+    editBtn.dataset.templateId = template.id;
+    editBtn.textContent = 'Edit';
+
+    const dupBtn = document.createElement('button');
+    dupBtn.type = 'button';
+    dupBtn.className = 'secondary tiny-action';
+    dupBtn.dataset.action = 'duplicate-meal-template';
+    dupBtn.dataset.templateId = template.id;
+    dupBtn.textContent = 'Duplicate';
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'secondary tiny-action';
+    delBtn.dataset.action = 'delete-meal-template';
+    delBtn.dataset.templateId = template.id;
+    delBtn.textContent = 'Delete';
+
+    actions.append(editBtn, dupBtn, delBtn);
+    card.append(logBtn, actions);
+    wrap.appendChild(card);
+  });
+}
+
+export function renderMealTemplateItems(items = []) {
+  const wrap = el('mealTemplateItems');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+
+  if (!items.length) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = 'No items yet. Click “Add item”.';
+    wrap.appendChild(empty);
+    return;
+  }
+
+  items.forEach((item, index) => {
+    const row = document.createElement('div');
+    row.className = 'meal-template-item-row';
+
+    const top = document.createElement('div');
+    top.className = 'meal-template-item-top';
+
+    const label = document.createElement('strong');
+    label.textContent = item.label;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'secondary';
+    removeBtn.dataset.action = 'remove-meal-item';
+    removeBtn.dataset.index = String(index);
+    removeBtn.textContent = 'Remove';
+
+    top.append(label, removeBtn);
+
+    const gramsLabel = document.createElement('label');
+    gramsLabel.textContent = 'Default grams';
+    const gramsInput = document.createElement('input');
+    gramsInput.type = 'number';
+    gramsInput.min = '1';
+    gramsInput.step = '1';
+    gramsInput.value = String(Math.round(Number(item.gramsDefault || 100)) || 100);
+    gramsInput.dataset.index = String(index);
+    gramsInput.dataset.action = 'meal-item-grams';
+    gramsLabel.appendChild(gramsInput);
+
+    const kcalInfo = document.createElement('div');
+    kcalInfo.className = 'muted tiny';
+    const grams = Number(item.gramsDefault || 100);
+    const per100 = Number(item.per100g?.kcal || 0);
+    const kcal = Number.isFinite(grams) && Number.isFinite(per100) ? Math.round((grams / 100) * per100) : 0;
+    kcalInfo.textContent = `~ ${kcal} kcal`;
+
+    row.append(top, gramsLabel, kcalInfo);
+    wrap.appendChild(row);
+  });
+}
+
+export function renderMealTemplateSearchResults(items = []) {
+  const wrap = el('mealTemplateSearchResults');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+
+  if (!items.length) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = 'No matching foods found.';
+    wrap.appendChild(empty);
+    return;
+  }
+
+  items.forEach((item) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'suggestion';
+    btn.dataset.action = 'select-meal-item';
+    btn.dataset.foodId = item.foodId;
+
+    const left = document.createElement('div');
+    const strong = document.createElement('strong');
+    strong.textContent = item.label;
+    const sub = document.createElement('div');
+    sub.className = 'muted tiny';
+    sub.textContent = item.groupLabel || '';
+    left.append(strong, sub);
+
+    const right = document.createElement('span');
+    right.className = 'muted tiny';
+    const per100 = macroPer100FromAny(item.nutrition);
+    right.textContent = `${Math.round(Number(per100.kcal) || 0)} kcal/100g`;
+
+    btn.append(left, right);
+    wrap.appendChild(btn);
+  });
+}
+
+export function openMealTemplateDialog() {
+  el('mealTemplateDialog').showModal();
+}
+
+export function closeMealTemplateDialog() {
+  el('mealTemplateDialog').close();
 }
