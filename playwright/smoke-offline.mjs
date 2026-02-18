@@ -68,7 +68,7 @@ async function runChromiumOfflineCheck(chromium) {
   }
 }
 
-const preflight = await playwrightPreflight();
+const preflight = await playwrightPreflight({ requiredBrowsers: ['webkit', 'chromium'] });
 if (!preflight.ok) {
   if (preflight.reason === 'browser-binaries-missing') {
     console.warn('Skipping Playwright smoke-offline: browser binaries not installed (likely blocked download / CDN 403).');

@@ -73,6 +73,11 @@
             </div>
 
             <section>
+              <h3>Meals</h3>
+              <div id="mealTemplatesRow" class="meal-templates-row" aria-label="Meal templates"></div>
+            </section>
+
+            <section>
               <h3>Favorites</h3>
               <div id="favoriteList" class="suggestions"></div>
             </section>
@@ -248,6 +253,13 @@
                 <label>F <input id="personMacroF" type="number" min="0" max="600" step="1" /></label>
               </div>
             </fieldset>
+            <fieldset class="macro-fieldset">
+              <legend>Healthy habit goals</legend>
+              <div class="inline-controls">
+                <label>Water (ml/day) <input id="personWaterGoalMl" type="number" min="250" max="10000" step="50" /></label>
+                <label>Exercise (min/day) <input id="personExerciseGoalMin" type="number" min="5" max="600" step="5" /></label>
+              </div>
+            </fieldset>
             <div class="row-actions">
               <button type="submit" id="savePersonBtn">Save Person</button>
               <button type="button" id="cancelEditBtn" class="secondary" hidden>Cancel edit</button>
@@ -284,6 +296,31 @@
         <button id="confirmPortionBtn">Log Entry</button>
         <button id="cancelPortionBtn" class="secondary">Cancel</button>
       </div>
+    </dialog>
+
+    <dialog id="mealTemplateDialog">
+      <h3>Create Meal Template</h3>
+      <form id="mealTemplateForm" class="form-grid">
+        <label>
+          Meal name
+          <input id="mealTemplateName" type="text" maxlength="80" required placeholder="e.g. Breakfast Standard" />
+        </label>
+        <div class="row-actions">
+          <button type="button" id="mealTemplateAddItemBtn" class="secondary">Add item</button>
+        </div>
+        <div id="mealTemplatePicker" class="meal-template-picker" hidden>
+          <label>
+            Search foods
+            <input id="mealTemplateSearchInput" type="search" placeholder="Search favorites, recents, and built-in foods" />
+          </label>
+          <div id="mealTemplateSearchResults" class="suggestions"></div>
+        </div>
+        <div id="mealTemplateItems" class="stack"></div>
+        <div class="row-actions">
+          <button type="submit" id="saveMealTemplateBtn">Save meal</button>
+          <button type="button" id="cancelMealTemplateBtn" class="secondary">Cancel</button>
+        </div>
+      </form>
     </dialog>
 
     <dialog id="installDialog">
