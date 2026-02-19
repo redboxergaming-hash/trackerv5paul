@@ -38,6 +38,18 @@ function validatePositiveNumber(value, fieldName) {
   return n;
 }
 
+function validateIsoDate(value, fieldName = 'date') {
+  const text = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    throw new Error(`${fieldName} must be YYYY-MM-DD`);
+  }
+  const parsed = Date.parse(`${text}T00:00:00Z`);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${fieldName} must be YYYY-MM-DD`);
+  }
+  return text;
+}
+
 async function ensurePersonExists(personId) {
   if (!personId) throw new Error('personId is required');
   const db = await openDb();
@@ -445,7 +457,7 @@ export async function addEntry(entry) {
 
 
 export async function addWaterLog({ personId, date, amountMl }) {
-  if (!date) throw new Error('date is required');
+  const normalizedDate = validateIsoDate(date);
   await ensurePersonExists(personId);
   const amount = validatePositiveNumber(amountMl, 'amountMl');
 
@@ -454,7 +466,7 @@ export async function addWaterLog({ personId, date, amountMl }) {
   const row = {
     id: createId(),
     personId,
-    date,
+    date: normalizedDate,
     amountMl: amount,
     createdAt: Date.now()
   };
@@ -464,7 +476,7 @@ export async function addWaterLog({ personId, date, amountMl }) {
 }
 
 export async function addExerciseLog({ personId, date, minutes }) {
-  if (!date) throw new Error('date is required');
+  const normalizedDate = validateIsoDate(date);
   await ensurePersonExists(personId);
   const mins = validatePositiveNumber(minutes, 'minutes');
 
@@ -473,7 +485,7 @@ export async function addExerciseLog({ personId, date, minutes }) {
   const row = {
     id: createId(),
     personId,
-    date,
+    date: normalizedDate,
     minutes: mins,
     createdAt: Date.now()
   };
@@ -501,6 +513,56 @@ export async function getWaterTotalForPersonDate(personId, date) {
 
 export async function getExerciseTotalForPersonDate(personId, date) {
   return getHabitTotal('exerciseLogs', 'minutes', personId, date);
+}
+
+export async function getWaterLogsForPersonDate(personId, date) {
+  if (!personId || !date) return [];
+  const db = await openDb();
+  const tx = db.transaction('waterLogs', 'readonly');
+  const index = tx.objectStore('waterLogs').index('byPersonDate');
+  return promisify(index.getAll([personId, date]));
+}
+
+export async function getExerciseLogsForPersonDate(personId, date) {
+  if (!personId || !date) return [];
+  const db = await openDb();
+  const tx = db.transaction('exerciseLogs', 'readonly');
+  const index = tx.objectStore('exerciseLogs').index('byPersonDate');
+  return promisify(index.getAll([personId, date]));
+}
+
+function sanitizeWaterLog(row) {
+  if (!row || !row.personId) return null;
+  try {
+    const date = validateIsoDate(row.date);
+    const amountMl = validatePositiveNumber(row.amountMl, 'amountMl');
+    return {
+      id: row.id || createId(),
+      personId: row.personId,
+      date,
+      amountMl,
+      createdAt: Number.isFinite(Number(row.createdAt)) ? Number(row.createdAt) : Date.now()
+    };
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeExerciseLog(row) {
+  if (!row || !row.personId) return null;
+  try {
+    const date = validateIsoDate(row.date);
+    const minutes = validatePositiveNumber(row.minutes, 'minutes');
+    return {
+      id: row.id || createId(),
+      personId: row.personId,
+      date,
+      minutes,
+      createdAt: Number.isFinite(Number(row.createdAt)) ? Number(row.createdAt) : Date.now()
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function getMealTemplates() {
@@ -709,6 +771,23 @@ export async function getLastPortion(lastPortionKey) {
   return row?.value ?? null;
 }
 
+export async function getMetaValue(key) {
+  if (!key) return null;
+  const db = await openDb();
+  const tx = db.transaction('meta', 'readonly');
+  const row = await promisify(tx.objectStore('meta').get(key));
+  return row?.value ?? null;
+}
+
+export async function setMetaValue(key, value) {
+  if (!key) throw new Error('meta key is required');
+  const db = await openDb();
+  const tx = db.transaction('meta', 'readwrite');
+  tx.objectStore('meta').put({ key, value });
+  await txDone(tx);
+  return value;
+}
+
 
 function uniqueById(items, idKey = 'id') {
   const map = new Map();
@@ -761,8 +840,8 @@ export async function importAllData(payload) {
   const favorites = uniqueById(payload.favorites || []);
   const recents = uniqueById(payload.recents || []);
   const weightLogs = [];
-  const waterLogs = uniqueById(payload.waterLogs || []);
-  const exerciseLogs = uniqueById(payload.exerciseLogs || []);
+  const waterLogs = uniqueById((payload.waterLogs || []).map(sanitizeWaterLog).filter(Boolean));
+  const exerciseLogs = uniqueById((payload.exerciseLogs || []).map(sanitizeExerciseLog).filter(Boolean));
   const weightByPersonDate = new Map();
   for (const row of payload.weightLogs || []) {
     const cleaned = sanitizeWeightLog(row);

@@ -32,7 +32,9 @@ import {
   addWaterLog,
   addExerciseLog,
   getWaterTotalForPersonDate,
-  getExerciseTotalForPersonDate
+  getExerciseTotalForPersonDate,
+  getMetaValue,
+  setMetaValue
 } from './storage.js';
 import {
   closePortionDialog,
@@ -67,7 +69,9 @@ import {
   renderMealTemplateItems,
   renderMealTemplateSearchResults,
   openMealTemplateDialog,
-  closeMealTemplateDialog
+  closeMealTemplateDialog,
+  renderSettingsDashboardLayout,
+  readSettingsDashboardLayout
 } from './ui.js';
 
 const CHATGPT_PHOTO_PROMPT = `Look at this meal photo. List the foods you can clearly identify.
@@ -158,6 +162,45 @@ async function loadNutritionOverview() {
   renderNutritionOverview(rows, hasAnyData);
 }
 
+
+const DASHBOARD_LAYOUT_DEFAULT = {
+  order: ['calories', 'macros', 'streak', 'habits', 'macroBreakdown'],
+  hidden: { calories: false, macros: false, streak: false, habits: false, macroBreakdown: false }
+};
+
+function normalizeDashboardLayout(layout) {
+  const baseOrder = [...DASHBOARD_LAYOUT_DEFAULT.order];
+  const incomingOrder = Array.isArray(layout?.order) ? layout.order : [];
+  const order = [];
+  incomingOrder.forEach((key) => {
+    if (baseOrder.includes(key) && !order.includes(key)) order.push(key);
+  });
+  baseOrder.forEach((key) => {
+    if (!order.includes(key)) order.push(key);
+  });
+
+  const hidden = {};
+  baseOrder.forEach((key) => {
+    hidden[key] = Boolean(layout?.hidden?.[key]);
+  });
+
+  return { order, hidden };
+}
+
+function moveDashboardCard(layout, key, direction) {
+  const idx = layout.order.indexOf(key);
+  if (idx < 0) return layout;
+  const next = idx + direction;
+  if (next < 0 || next >= layout.order.length) return layout;
+  const order = [...layout.order];
+  [order[idx], order[next]] = [order[next], order[idx]];
+  return { ...layout, order };
+}
+
+function getDashboardLayoutMetaKey(personId) {
+  return personId ? `dashboardLayout:${personId}` : null;
+}
+
 const state = {
   route: 'persons',
   persons: [],
@@ -174,7 +217,9 @@ const state = {
   dashboardMacroView: 'consumed',
   mealTemplates: [],
   mealTemplateDraft: { id: null, name: '', items: [] },
-  mealTemplatePickerOpen: false
+  mealTemplatePickerOpen: false,
+  dashboardLayoutByPerson: {},
+  settingsDashboardLayoutDraft: normalizeDashboardLayout(DASHBOARD_LAYOUT_DEFAULT)
 };
 
 function foodFromGeneric(item) {
@@ -436,6 +481,17 @@ async function loadAndRender() {
   renderNutritionPersonPicker(state.persons, state.selectedPersonId);
   setNutritionDefaultDate(state.selectedDate);
   renderSettingsPersons(state.persons);
+
+  const layoutPersonId = state.selectedPersonId || state.persons[0]?.id || null;
+  if (layoutPersonId && !state.dashboardLayoutByPerson[layoutPersonId]) {
+    const savedLayout = await getMetaValue(getDashboardLayoutMetaKey(layoutPersonId));
+    state.dashboardLayoutByPerson[layoutPersonId] = normalizeDashboardLayout(savedLayout || DASHBOARD_LAYOUT_DEFAULT);
+  }
+  state.settingsDashboardLayoutDraft = normalizeDashboardLayout(
+    layoutPersonId ? state.dashboardLayoutByPerson[layoutPersonId] : DASHBOARD_LAYOUT_DEFAULT
+  );
+  renderSettingsDashboardLayout(state.settingsDashboardLayoutDraft, handleMoveDashboardLayoutItem);
+
   document.querySelectorAll('#genericCategoryFilters button[data-category]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.category === state.selectedGenericCategory);
   });
@@ -457,7 +513,8 @@ async function loadAndRender() {
         waterGoalMl: Number.isFinite(Number(person.waterGoalMl)) ? Number(person.waterGoalMl) : 2000,
         exerciseGoalMinutes: Number.isFinite(Number(person.exerciseGoalMin)) ? Number(person.exerciseGoalMin) : 30,
         canLog: Boolean(person.id)
-      }
+      },
+      layout: state.dashboardLayoutByPerson[person.id] || DASHBOARD_LAYOUT_DEFAULT
     });
     filterSuggestions(document.getElementById('foodSearchInput').value || '', person.id);
   } else {
@@ -486,6 +543,35 @@ async function handlePersonSave(e) {
   await upsertPerson(person);
   state.selectedPersonId = person.id;
   fillPersonForm(null);
+  await loadAndRender();
+}
+
+
+function handleMoveDashboardLayoutItem(cardKey, direction) {
+  state.settingsDashboardLayoutDraft = moveDashboardCard(state.settingsDashboardLayoutDraft, cardKey, direction);
+  renderSettingsDashboardLayout(state.settingsDashboardLayoutDraft, handleMoveDashboardLayoutItem);
+}
+
+async function handleSaveDashboardLayout() {
+  const personId = state.selectedPersonId || state.persons[0]?.id;
+  if (!personId) {
+    showSettingsDataStatus('Create/select a person first.');
+    return;
+  }
+
+  const input = readSettingsDashboardLayout();
+  const nextLayout = normalizeDashboardLayout({
+    ...state.settingsDashboardLayoutDraft,
+    hidden: {
+      ...state.settingsDashboardLayoutDraft.hidden,
+      ...input.hidden
+    }
+  });
+
+  await setMetaValue(getDashboardLayoutMetaKey(personId), nextLayout);
+  state.dashboardLayoutByPerson[personId] = nextLayout;
+  state.settingsDashboardLayoutDraft = normalizeDashboardLayout(nextLayout);
+  showSettingsDataStatus('Dashboard layout saved.');
   await loadAndRender();
 }
 
@@ -1050,6 +1136,14 @@ function wireEvents() {
 
   document.getElementById('addPersonPicker').addEventListener('change', async (e) => {
     state.selectedPersonId = e.target.value || null;
+    const personId = state.selectedPersonId || state.persons[0]?.id || null;
+    if (personId && !state.dashboardLayoutByPerson[personId]) {
+      const savedLayout = await getMetaValue(getDashboardLayoutMetaKey(personId));
+      state.dashboardLayoutByPerson[personId] = normalizeDashboardLayout(savedLayout || DASHBOARD_LAYOUT_DEFAULT);
+    }
+    state.settingsDashboardLayoutDraft = normalizeDashboardLayout(
+      personId ? state.dashboardLayoutByPerson[personId] : DASHBOARD_LAYOUT_DEFAULT
+    );
     await loadAndRender();
   });
 
@@ -1194,6 +1288,14 @@ function wireEvents() {
   document.getElementById('personForm').addEventListener('submit', handlePersonSave);
   document.getElementById('cancelEditBtn').addEventListener('click', () => fillPersonForm(null));
   document.getElementById('settingsPersons').addEventListener('click', handleSettingsActions);
+  document.getElementById('saveDashboardLayoutBtn').addEventListener('click', async () => {
+    try {
+      await handleSaveDashboardLayout();
+    } catch (error) {
+      console.error(error);
+      showSettingsDataStatus('Could not save dashboard layout.');
+    }
+  });
 
   document.getElementById('exportDataBtn').addEventListener('click', async () => {
     try {

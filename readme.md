@@ -142,14 +142,14 @@ CI caching guidance:
 - Run `npm run pw:preflight` before smoke jobs to fail fast on missing binaries
 
 Meal-template artifact paths:
-- `artifacts/meal-templates/commit-1-storage/add-entry-meals.png`
-- `artifacts/meal-templates/commit-1-storage/meal-modal-empty.png`
-- `artifacts/meal-templates/commit-1-storage/meal-modal-filled.png`
-- `artifacts/meal-templates/commit-1-storage/dashboard-after-one-tap.png`
-- `artifacts/meal-templates/commit-2-ui/add-entry-meals.png`
-- `artifacts/meal-templates/commit-2-ui/meal-modal-empty.png`
-- `artifacts/meal-templates/commit-2-ui/meal-modal-filled.png`
-- `artifacts/meal-templates/commit-2-ui/dashboard-after-one-tap.png`
+- `.runtime-artifacts/meal-templates/commit-1-storage/add-entry-meals.png`
+- `.runtime-artifacts/meal-templates/commit-1-storage/meal-modal-empty.png`
+- `.runtime-artifacts/meal-templates/commit-1-storage/meal-modal-filled.png`
+- `.runtime-artifacts/meal-templates/commit-1-storage/dashboard-after-one-tap.png`
+- `.runtime-artifacts/meal-templates/commit-2-ui/add-entry-meals.png`
+- `.runtime-artifacts/meal-templates/commit-2-ui/meal-modal-empty.png`
+- `.runtime-artifacts/meal-templates/commit-2-ui/meal-modal-filled.png`
+- `.runtime-artifacts/meal-templates/commit-2-ui/dashboard-after-one-tap.png`
 
 ## Restricted environments (CDN 403)
 

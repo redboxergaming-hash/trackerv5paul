@@ -455,6 +455,24 @@ progress { width: 100%; height: 10px; accent-color: var(--accent); }
   .macro-track { background: rgba(226, 232, 240, 0.18); }
 }
 
+
+.settings-dashboard-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  background: var(--surface-soft);
+}
+
+.settings-dashboard-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
 .meal-templates-row {
   display: grid;
   grid-auto-flow: column;
@@ -520,3 +538,64 @@ progress { width: 100%; height: 10px; accent-color: var(--accent); }
   padding: 10px;
   background: var(--surface-soft);
 }
+
+.macro-breakdown-card {
+  margin-top: 12px;
+}
+
+.macro-breakdown-wrap {
+  display: grid;
+  gap: 10px;
+  align-items: center;
+}
+
+.macro-breakdown-chart {
+  width: 180px;
+  margin: 0 auto;
+}
+
+.macro-breakdown-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.macro-breakdown-center-label {
+  font-size: 10px;
+  fill: var(--muted);
+}
+
+.macro-breakdown-center-value {
+  font-size: 18px;
+  font-weight: 700;
+  fill: var(--text);
+}
+
+.macro-breakdown-legend {
+  display: grid;
+  gap: 8px;
+}
+
+.macro-breakdown-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.macro-breakdown-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.macro-breakdown-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.macro-breakdown-dot.carbs { background: #f97316; }
+.macro-breakdown-dot.protein { background: #16a34a; }
+.macro-breakdown-dot.fat { background: #eab308; }

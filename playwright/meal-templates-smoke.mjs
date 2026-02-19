@@ -3,7 +3,7 @@ import { chromiumLaunchOptions } from './config.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:4173/index.html';
-const outDir = process.env.MEAL_ARTIFACT_DIR || `artifacts/meal-templates/${process.env.MEAL_ARTIFACT_TAG || 'local-run'}`;
+const outDir = process.env.MEAL_ARTIFACT_DIR || `.runtime-artifacts/meal-templates/${process.env.MEAL_ARTIFACT_TAG || 'local-run'}`;
 const strictMode = process.env.SMOKE_STRICT === '1';
 
 mkdirSync(outDir, { recursive: true });

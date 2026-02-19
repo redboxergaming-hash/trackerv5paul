@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { playwrightPreflight } from './preflight.mjs';
 import { chromiumLaunchOptions } from './config.mjs';
 
-const outDir = 'artifacts/habits/commit-b';
+const outDir = '.runtime-artifacts/habits/commit-b';
 const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:4173/index.html';
 
 mkdirSync(outDir, { recursive: true });

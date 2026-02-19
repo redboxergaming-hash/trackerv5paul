@@ -1,0 +1,17 @@
+# Runtime/generated artifacts
+artifacts/
+.runtime-artifacts/
+
+# Test and Playwright outputs
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Binary and trace outputs
+*.png
+*.zip
+*.trace
+*.log
+
+# Dependencies
+node_modules/

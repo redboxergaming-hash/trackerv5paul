@@ -1,4 +1,5 @@
 import { clamp } from './math.js';
+import { renderMacroBreakdown } from './macroviz.js';
 
 function el(id) {
   return document.getElementById(id);
@@ -234,54 +235,223 @@ export function renderDashboard(person, date, entries, options = {}) {
   const macroView = options.macroView || 'consumed';
   const streakDays = Number.isFinite(options.streakDays) ? options.streakDays : 0;
 
-  el('dashboardSummary').innerHTML = `
+function safePositive(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function habitProgress(value, goal) {
+  if (!goal || goal <= 0) return 0;
+  return Math.max(0, Math.min(1, value / goal));
+}
+
+function createHabitCard({
+  title,
+  valueText,
+  progress,
+  actions,
+  disabled
+}) {
+  const card = document.createElement('article');
+
+  const titleEl = document.createElement('strong');
+  titleEl.textContent = title;
+
+  const valueEl = document.createElement('p');
+  valueEl.className = 'muted tiny';
+  valueEl.textContent = valueText;
+
+  const progressEl = document.createElement('progress');
+  progressEl.max = 1;
+  progressEl.value = progress;
+
+  const actionRow = document.createElement('div');
+  actionRow.className = 'row-actions habit-actions';
+  actions.forEach((action) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'secondary';
+    btn.dataset.action = action.action;
+    btn.textContent = action.label;
+    btn.disabled = Boolean(disabled);
+    actionRow.appendChild(btn);
+  });
+
+  card.append(titleEl, valueEl, progressEl, actionRow);
+  return card;
+}
+
+function renderDashboardHabits(container, habits) {
+  if (!container) return;
+  container.innerHTML = '';
+
+  const waterMl = safePositive(habits?.waterMl);
+  const waterGoalMl = safePositive(habits?.waterGoalMl || 2000);
+  const exerciseMinutes = safePositive(habits?.exerciseMinutes);
+  const exerciseGoalMinutes = safePositive(habits?.exerciseGoalMinutes || 30);
+  const disabled = !habits?.canLog;
+
+  const waterCard = createHabitCard({
+    title: 'Water',
+    valueText: `${Math.round(waterMl)} ml / ${Math.round(waterGoalMl)} ml`,
+    progress: habitProgress(waterMl, waterGoalMl),
+    actions: [
+      { action: 'add-water-250', label: '+250 ml' },
+      { action: 'add-water-500', label: '+500 ml' }
+    ],
+    disabled
+  });
+
+  const exerciseCard = createHabitCard({
+    title: 'Exercise',
+    valueText: `${Math.round(exerciseMinutes)} min / ${Math.round(exerciseGoalMinutes)} min`,
+    progress: habitProgress(exerciseMinutes, exerciseGoalMinutes),
+    actions: [
+      { action: 'add-exercise-10', label: '+10 min' },
+      { action: 'add-exercise-20', label: '+20 min' }
+    ],
+    disabled
+  });
+
+  container.append(waterCard, exerciseCard);
+  if (disabled) {
+    const hint = document.createElement('p');
+    hint.className = 'muted tiny';
+    hint.textContent = 'Select a person to log water and exercise.';
+    container.appendChild(hint);
+  }
+}
+
+const DASHBOARD_CARD_LABELS = {
+  calories: 'Calories',
+  macros: 'Macros',
+  streak: 'Logging streak',
+  habits: 'Healthy Habits',
+  macroBreakdown: 'Macro Breakdown'
+};
+
+const DASHBOARD_DEFAULT_ORDER = ['calories', 'macros', 'streak', 'habits', 'macroBreakdown'];
+
+function normalizeDashboardLayout(layout) {
+  const incomingOrder = Array.isArray(layout?.order) ? layout.order : [];
+  const deduped = [];
+  incomingOrder.forEach((key) => {
+    if (DASHBOARD_DEFAULT_ORDER.includes(key) && !deduped.includes(key)) deduped.push(key);
+  });
+  DASHBOARD_DEFAULT_ORDER.forEach((key) => {
+    if (!deduped.includes(key)) deduped.push(key);
+  });
+
+  const hidden = {};
+  DASHBOARD_DEFAULT_ORDER.forEach((key) => {
+    hidden[key] = Boolean(layout?.hidden?.[key]);
+  });
+
+  return { order: deduped, hidden };
+}
+
+function renderDashboardCardByKey(key, context) {
+  if (key === 'calories') {
+    return `
     <section class="dashboard-hero">
       <article class="hero-card hero-calories">
         <h3>Calories consumed</h3>
-        <p class="hero-value">${consumedKcal}</p>
-        <p class="muted tiny">Goal ${person.kcalGoal} kcal</p>
-        <div class="macro-track"><div class="macro-fill" style="width:${kcalProgress}%"></div></div>
+        <p class="hero-value">${context.consumedKcal}</p>
+        <p class="muted tiny">Goal ${context.person.kcalGoal} kcal</p>
+        <div class="macro-track"><div class="macro-fill" style="width:${context.kcalProgress}%"></div></div>
       </article>
-      <article class="hero-card hero-remaining ${remainingKcal <= 0 ? 'goal-met' : ''}">
+      <article class="hero-card hero-remaining ${context.remainingKcal <= 0 ? 'goal-met' : ''}">
         <h3>Calories remaining</h3>
-        <p class="hero-value">${remainingKcal}</p>
-        <p class="muted tiny">${remainingKcal <= 0 ? 'Daily target reached' : 'Keep going'}</p>
+        <p class="hero-value">${context.remainingKcal}</p>
+        <p class="muted tiny">${context.remainingKcal <= 0 ? 'Daily target reached' : 'Keep going'}</p>
       </article>
-    </section>
+    </section>`;
+  }
 
+  if (key === 'macros') {
+    return `
     <section class="dashboard-macros">
       <div class="row-actions macro-view-toggle" role="group" aria-label="Macro display mode">
-        <button type="button" class="secondary ${macroView === 'consumed' ? 'active' : ''}" data-macro-view="consumed">Consumed (g)</button>
-        <button type="button" class="secondary ${macroView === 'remaining' ? 'active' : ''}" data-macro-view="remaining">Remaining (g)</button>
-        <button type="button" class="secondary ${macroView === 'percent' ? 'active' : ''}" data-macro-view="percent">% Calories</button>
+        <button type="button" class="secondary ${context.macroView === 'consumed' ? 'active' : ''}" data-macro-view="consumed">Consumed (g)</button>
+        <button type="button" class="secondary ${context.macroView === 'remaining' ? 'active' : ''}" data-macro-view="remaining">Remaining (g)</button>
+        <button type="button" class="secondary ${context.macroView === 'percent' ? 'active' : ''}" data-macro-view="percent">% Calories</button>
       </div>
       <div class="macro-grid">
-        ${renderMacroCard({ label: 'Protein', consumed: totals.p, goal: person.macroTargets?.p, kcalFactor: 4, view: macroView, toneClass: 'macro-protein', personKcalGoal: person.kcalGoal })}
-        ${renderMacroCard({ label: 'Carbs', consumed: totals.c, goal: person.macroTargets?.c, kcalFactor: 4, view: macroView, toneClass: 'macro-carbs', personKcalGoal: person.kcalGoal })}
-        ${renderMacroCard({ label: 'Fat', consumed: totals.f, goal: person.macroTargets?.f, kcalFactor: 9, view: macroView, toneClass: 'macro-fat', personKcalGoal: person.kcalGoal })}
+        ${renderMacroCard({ label: 'Protein', consumed: context.totals.p, goal: context.person.macroTargets?.p, kcalFactor: 4, view: context.macroView, toneClass: 'macro-protein', personKcalGoal: context.person.kcalGoal })}
+        ${renderMacroCard({ label: 'Carbs', consumed: context.totals.c, goal: context.person.macroTargets?.c, kcalFactor: 4, view: context.macroView, toneClass: 'macro-carbs', personKcalGoal: context.person.kcalGoal })}
+        ${renderMacroCard({ label: 'Fat', consumed: context.totals.f, goal: context.person.macroTargets?.f, kcalFactor: 9, view: context.macroView, toneClass: 'macro-fat', personKcalGoal: context.person.kcalGoal })}
       </div>
-    </section>
+    </section>`;
+  }
 
+  if (key === 'macroBreakdown') {
+    return `
+    <article class="card macro-breakdown-card">
+      <h3>Macro breakdown</h3>
+      <div id="macroBreakdownViz" class="macro-breakdown-wrap"></div>
+    </article>`;
+  }
+
+  if (key === 'streak') {
+    return `
     <section class="streak-card">
       <h3>Logging streak</h3>
-      <p><strong>${streakDays} day${streakDays === 1 ? '' : 's'}</strong> in a row</p>
-      <div class="macro-track"><div class="macro-fill" style="width:${Math.min(100, streakDays * 10)}%"></div></div>
-    </section>
+      <p><strong>${context.streakDays} day${context.streakDays === 1 ? '' : 's'}</strong> in a row</p>
+      <div class="macro-track"><div class="macro-fill" style="width:${Math.min(100, context.streakDays * 10)}%"></div></div>
+    </section>`;
+  }
 
+  if (key === 'habits') {
+    return `
     <section class="habits-card">
       <h3>Healthy Habits</h3>
       <div id="dashboardHabits" class="habit-grid"></div>
-    </section>
+    </section>`;
+  }
+
+  return '';
+}
+
+export function renderDashboard(person, date, entries, options = {}) {
+  const totals = sumEntries(entries);
+  const consumedKcal = Math.round(totals.kcal);
+  const remainingKcal = Math.max(0, Math.round(person.kcalGoal - totals.kcal));
+  const kcalProgress = person.kcalGoal > 0 ? Math.min(100, Math.round((totals.kcal / person.kcalGoal) * 100)) : 0;
+  const macroView = options.macroView || 'consumed';
+  const streakDays = Number.isFinite(options.streakDays) ? options.streakDays : 0;
+  const layout = normalizeDashboardLayout(options.layout);
+
+  const context = {
+    person,
+    totals,
+    consumedKcal,
+    remainingKcal,
+    kcalProgress,
+    macroView,
+    streakDays
+  };
+
+  const visibleCards = layout.order.filter((key) => !layout.hidden[key]);
+  const sectionsHtml = visibleCards.map((key) => renderDashboardCardByKey(key, context)).join('');
+
+  el('dashboardSummary').innerHTML = `
+    ${sectionsHtml}
     <p class="muted">Date: ${date}</p>
   `;
 
-  renderDashboardHabits(el('dashboardHabits'), {
-    waterMl: options.habits?.waterMl,
-    exerciseMinutes: options.habits?.exerciseMinutes,
-    waterGoalMl: options.habits?.waterGoalMl || 2000,
-    exerciseGoalMinutes: options.habits?.exerciseGoalMinutes || 30,
-    canLog: options.habits?.canLog !== false
-  });
+  if (visibleCards.includes('habits')) {
+    renderDashboardHabits(el('dashboardHabits'), {
+      waterMl: options.habits?.waterMl,
+      exerciseMinutes: options.habits?.exerciseMinutes,
+      waterGoalMl: options.habits?.waterGoalMl || 2000,
+      exerciseGoalMinutes: options.habits?.exerciseGoalMinutes || 30,
+      canLog: options.habits?.canLog !== false
+    });
+  }
+
+  if (visibleCards.includes('macroBreakdown')) {
+    renderMacroBreakdown(el('macroBreakdownViz'), totals);
+  }
 
   el('entriesTableContainer').innerHTML = entries.length
     ? `<table>
@@ -300,7 +470,20 @@ export function renderDashboard(person, date, entries, options = {}) {
 }
 
 export function renderDashboardEmpty() {
-  el('dashboardSummary').innerHTML = '<p class="muted">No persons available. Add a person in Settings.</p>';
+  el('dashboardSummary').innerHTML = `
+    <section class="habits-card">
+      <h3>Healthy Habits</h3>
+      <div id="dashboardHabits" class="habit-grid"></div>
+      <p class="muted tiny">No person selected. Add/select a person in Settings.</p>
+    </section>
+  `;
+  renderDashboardHabits(el('dashboardHabits'), {
+    waterMl: 0,
+    exerciseMinutes: 0,
+    waterGoalMl: 2000,
+    exerciseGoalMinutes: 30,
+    canLog: false
+  });
   el('entriesTableContainer').innerHTML = '';
 }
 
@@ -327,6 +510,63 @@ export function renderSettingsPersons(persons) {
     </article>`
     )
     .join('');
+}
+
+export function renderSettingsDashboardLayout(layout, onMove) {
+  const container = el('settingsDashboardLayout');
+  if (!container) return;
+
+  const normalized = normalizeDashboardLayout(layout);
+  container.innerHTML = '';
+
+  normalized.order.forEach((key, index) => {
+    const row = document.createElement('article');
+    row.className = 'settings-dashboard-row';
+
+    const left = document.createElement('label');
+    left.className = 'settings-dashboard-toggle';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.dataset.cardKey = key;
+    checkbox.checked = !normalized.hidden[key];
+
+    const text = document.createElement('span');
+    text.textContent = DASHBOARD_CARD_LABELS[key] || key;
+
+    left.append(checkbox, text);
+
+    const actions = document.createElement('div');
+    actions.className = 'settings-actions';
+
+    const upBtn = document.createElement('button');
+    upBtn.type = 'button';
+    upBtn.className = 'secondary tiny-action';
+    upBtn.textContent = 'Up';
+    upBtn.disabled = index === 0;
+    upBtn.addEventListener('click', () => onMove(key, -1));
+
+    const downBtn = document.createElement('button');
+    downBtn.type = 'button';
+    downBtn.className = 'secondary tiny-action';
+    downBtn.textContent = 'Down';
+    downBtn.disabled = index === normalized.order.length - 1;
+    downBtn.addEventListener('click', () => onMove(key, 1));
+
+    actions.append(upBtn, downBtn);
+    row.append(left, actions);
+    container.appendChild(row);
+  });
+}
+
+export function readSettingsDashboardLayout() {
+  const container = el('settingsDashboardLayout');
+  const checkboxes = container ? container.querySelectorAll('input[type="checkbox"][data-card-key]') : [];
+  const hidden = {};
+  checkboxes.forEach((box) => {
+    hidden[box.dataset.cardKey] = !box.checked;
+  });
+  return { hidden };
 }
 
 export function fillPersonForm(person) {
