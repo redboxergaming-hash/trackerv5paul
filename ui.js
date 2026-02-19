@@ -225,6 +225,95 @@ function renderDashboardHabits(container, habits) {
   });
 
   container.append(waterCard, exerciseCard);
+}
+
+export function renderDashboard(person, date, entries, options = {}) {
+  const totals = sumEntries(entries);
+  const consumedKcal = Math.round(totals.kcal);
+  const remainingKcal = Math.max(0, Math.round(person.kcalGoal - totals.kcal));
+  const kcalProgress = person.kcalGoal > 0 ? Math.min(100, Math.round((totals.kcal / person.kcalGoal) * 100)) : 0;
+  const macroView = options.macroView || 'consumed';
+  const streakDays = Number.isFinite(options.streakDays) ? options.streakDays : 0;
+
+function safePositive(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function habitProgress(value, goal) {
+  if (!goal || goal <= 0) return 0;
+  return Math.max(0, Math.min(1, value / goal));
+}
+
+function createHabitCard({
+  title,
+  valueText,
+  progress,
+  actions,
+  disabled
+}) {
+  const card = document.createElement('article');
+
+  const titleEl = document.createElement('strong');
+  titleEl.textContent = title;
+
+  const valueEl = document.createElement('p');
+  valueEl.className = 'muted tiny';
+  valueEl.textContent = valueText;
+
+  const progressEl = document.createElement('progress');
+  progressEl.max = 1;
+  progressEl.value = progress;
+
+  const actionRow = document.createElement('div');
+  actionRow.className = 'row-actions habit-actions';
+  actions.forEach((action) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'secondary';
+    btn.dataset.action = action.action;
+    btn.textContent = action.label;
+    btn.disabled = Boolean(disabled);
+    actionRow.appendChild(btn);
+  });
+
+  card.append(titleEl, valueEl, progressEl, actionRow);
+  return card;
+}
+
+function renderDashboardHabits(container, habits) {
+  if (!container) return;
+  container.innerHTML = '';
+
+  const waterMl = safePositive(habits?.waterMl);
+  const waterGoalMl = safePositive(habits?.waterGoalMl || 2000);
+  const exerciseMinutes = safePositive(habits?.exerciseMinutes);
+  const exerciseGoalMinutes = safePositive(habits?.exerciseGoalMinutes || 30);
+  const disabled = !habits?.canLog;
+
+  const waterCard = createHabitCard({
+    title: 'Water',
+    valueText: `${Math.round(waterMl)} ml / ${Math.round(waterGoalMl)} ml`,
+    progress: habitProgress(waterMl, waterGoalMl),
+    actions: [
+      { action: 'add-water-250', label: '+250 ml' },
+      { action: 'add-water-500', label: '+500 ml' }
+    ],
+    disabled
+  });
+
+  const exerciseCard = createHabitCard({
+    title: 'Exercise',
+    valueText: `${Math.round(exerciseMinutes)} min / ${Math.round(exerciseGoalMinutes)} min`,
+    progress: habitProgress(exerciseMinutes, exerciseGoalMinutes),
+    actions: [
+      { action: 'add-exercise-10', label: '+10 min' },
+      { action: 'add-exercise-20', label: '+20 min' }
+    ],
+    disabled
+  });
+
+  container.append(waterCard, exerciseCard);
   if (disabled) {
     const hint = document.createElement('p');
     hint.className = 'muted tiny';
