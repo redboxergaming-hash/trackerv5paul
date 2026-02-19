@@ -7,7 +7,11 @@
     "test": "node --test math.test.js",
     "smoke:offline": "node playwright/smoke-offline.mjs",
     "playwright:install": "node scripts/playwright-install.mjs",
-    "playwright:install:deps": "node scripts/playwright-install.mjs --with-deps chromium webkit"
+    "playwright:install:deps": "node scripts/playwright-install.mjs --with-deps chromium webkit",
+    "pw:install": "playwright install --with-deps",
+    "pw:preflight": "node playwright/preflight.mjs",
+    "pw:setup": "node scripts/pw-setup.mjs",
+    "meal:smoke": "node playwright/meal-templates-smoke.mjs"
   },
   "devDependencies": {
     "playwright": "^1.55.0"

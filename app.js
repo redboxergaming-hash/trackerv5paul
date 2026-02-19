@@ -23,7 +23,18 @@ import {
   isFavorite,
   seedSampleData,
   toggleFavorite,
-  upsertPerson
+  upsertPerson,
+  getMealTemplates,
+  upsertMealTemplate,
+  logMealTemplate,
+  getMealTemplate,
+  deleteMealTemplate,
+  addWaterLog,
+  addExerciseLog,
+  getWaterTotalForPersonDate,
+  getExerciseTotalForPersonDate,
+  getMetaValue,
+  setMetaValue
 } from './storage.js';
 import {
   closePortionDialog,
@@ -53,7 +64,14 @@ import {
   renderAnalyticsInsights,
   renderNutritionPersonPicker,
   setNutritionDefaultDate,
-  renderNutritionOverview
+  renderNutritionOverview,
+  renderMealTemplates,
+  renderMealTemplateItems,
+  renderMealTemplateSearchResults,
+  openMealTemplateDialog,
+  closeMealTemplateDialog,
+  renderSettingsDashboardLayout,
+  readSettingsDashboardLayout
 } from './ui.js';
 
 const CHATGPT_PHOTO_PROMPT = `Look at this meal photo. List the foods you can clearly identify.
@@ -144,6 +162,45 @@ async function loadNutritionOverview() {
   renderNutritionOverview(rows, hasAnyData);
 }
 
+
+const DASHBOARD_LAYOUT_DEFAULT = {
+  order: ['calories', 'macros', 'streak', 'habits', 'macroBreakdown'],
+  hidden: { calories: false, macros: false, streak: false, habits: false, macroBreakdown: false }
+};
+
+function normalizeDashboardLayout(layout) {
+  const baseOrder = [...DASHBOARD_LAYOUT_DEFAULT.order];
+  const incomingOrder = Array.isArray(layout?.order) ? layout.order : [];
+  const order = [];
+  incomingOrder.forEach((key) => {
+    if (baseOrder.includes(key) && !order.includes(key)) order.push(key);
+  });
+  baseOrder.forEach((key) => {
+    if (!order.includes(key)) order.push(key);
+  });
+
+  const hidden = {};
+  baseOrder.forEach((key) => {
+    hidden[key] = Boolean(layout?.hidden?.[key]);
+  });
+
+  return { order, hidden };
+}
+
+function moveDashboardCard(layout, key, direction) {
+  const idx = layout.order.indexOf(key);
+  if (idx < 0) return layout;
+  const next = idx + direction;
+  if (next < 0 || next >= layout.order.length) return layout;
+  const order = [...layout.order];
+  [order[idx], order[next]] = [order[next], order[idx]];
+  return { ...layout, order };
+}
+
+function getDashboardLayoutMetaKey(personId) {
+  return personId ? `dashboardLayout:${personId}` : null;
+}
+
 const state = {
   route: 'persons',
   persons: [],
@@ -157,7 +214,12 @@ const state = {
   analyticsRange: '1W',
   analyticsPoints: [],
   selectedGenericCategory: 'All',
-  dashboardMacroView: 'consumed'
+  dashboardMacroView: 'consumed',
+  mealTemplates: [],
+  mealTemplateDraft: { id: null, name: '', items: [] },
+  mealTemplatePickerOpen: false,
+  dashboardLayoutByPerson: {},
+  settingsDashboardLayoutDraft: normalizeDashboardLayout(DASHBOARD_LAYOUT_DEFAULT)
 };
 
 function foodFromGeneric(item) {
@@ -419,16 +481,40 @@ async function loadAndRender() {
   renderNutritionPersonPicker(state.persons, state.selectedPersonId);
   setNutritionDefaultDate(state.selectedDate);
   renderSettingsPersons(state.persons);
+
+  const layoutPersonId = state.selectedPersonId || state.persons[0]?.id || null;
+  if (layoutPersonId && !state.dashboardLayoutByPerson[layoutPersonId]) {
+    const savedLayout = await getMetaValue(getDashboardLayoutMetaKey(layoutPersonId));
+    state.dashboardLayoutByPerson[layoutPersonId] = normalizeDashboardLayout(savedLayout || DASHBOARD_LAYOUT_DEFAULT);
+  }
+  state.settingsDashboardLayoutDraft = normalizeDashboardLayout(
+    layoutPersonId ? state.dashboardLayoutByPerson[layoutPersonId] : DASHBOARD_LAYOUT_DEFAULT
+  );
+  renderSettingsDashboardLayout(state.settingsDashboardLayoutDraft, handleMoveDashboardLayoutItem);
+
   document.querySelectorAll('#genericCategoryFilters button[data-category]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.category === state.selectedGenericCategory);
   });
 
+  state.mealTemplates = await getMealTemplates();
+  renderMealTemplates(state.mealTemplates);
+
   const person = state.persons.find((p) => p.id === state.selectedPersonId);
   if (person) {
     const streakDays = await computeLoggingStreakDays(person.id, state.selectedDate);
+    const waterMl = await getWaterTotalForPersonDate(person.id, state.selectedDate);
+    const exerciseMinutes = await getExerciseTotalForPersonDate(person.id, state.selectedDate);
     renderDashboard(person, state.selectedDate, entriesByPerson[person.id] || [], {
       macroView: state.dashboardMacroView,
-      streakDays
+      streakDays,
+      habits: {
+        waterMl,
+        exerciseMinutes,
+        waterGoalMl: Number.isFinite(Number(person.waterGoalMl)) ? Number(person.waterGoalMl) : 2000,
+        exerciseGoalMinutes: Number.isFinite(Number(person.exerciseGoalMin)) ? Number(person.exerciseGoalMin) : 30,
+        canLog: Boolean(person.id)
+      },
+      layout: state.dashboardLayoutByPerson[person.id] || DASHBOARD_LAYOUT_DEFAULT
     });
     filterSuggestions(document.getElementById('foodSearchInput').value || '', person.id);
   } else {
@@ -451,9 +537,41 @@ async function handlePersonSave(e) {
     return;
   }
 
+  person.waterGoalMl = Number.isFinite(Number(person.waterGoalMl)) ? Number(person.waterGoalMl) : 2000;
+  person.exerciseGoalMin = Number.isFinite(Number(person.exerciseGoalMin)) ? Number(person.exerciseGoalMin) : 30;
+
   await upsertPerson(person);
   state.selectedPersonId = person.id;
   fillPersonForm(null);
+  await loadAndRender();
+}
+
+
+function handleMoveDashboardLayoutItem(cardKey, direction) {
+  state.settingsDashboardLayoutDraft = moveDashboardCard(state.settingsDashboardLayoutDraft, cardKey, direction);
+  renderSettingsDashboardLayout(state.settingsDashboardLayoutDraft, handleMoveDashboardLayoutItem);
+}
+
+async function handleSaveDashboardLayout() {
+  const personId = state.selectedPersonId || state.persons[0]?.id;
+  if (!personId) {
+    showSettingsDataStatus('Create/select a person first.');
+    return;
+  }
+
+  const input = readSettingsDashboardLayout();
+  const nextLayout = normalizeDashboardLayout({
+    ...state.settingsDashboardLayoutDraft,
+    hidden: {
+      ...state.settingsDashboardLayoutDraft.hidden,
+      ...input.hidden
+    }
+  });
+
+  await setMetaValue(getDashboardLayoutMetaKey(personId), nextLayout);
+  state.dashboardLayoutByPerson[personId] = nextLayout;
+  state.settingsDashboardLayoutDraft = normalizeDashboardLayout(nextLayout);
+  showSettingsDataStatus('Dashboard layout saved.');
   await loadAndRender();
 }
 
@@ -768,7 +886,165 @@ function handlePhotoSelected(file) {
 }
 
 
+function mealItemFromSuggestion(item) {
+  return {
+    foodKey: item.foodId,
+    label: item.label,
+    per100g: {
+      kcal: Number(item.nutrition?.kcal100g || 0),
+      protein: Number(item.nutrition?.p100g || 0),
+      carbs: Number(item.nutrition?.c100g || 0),
+      fat: Number(item.nutrition?.f100g || 0)
+    },
+    gramsDefault: 100
+  };
+}
+
+function mealTemplateSuggestionPool(personId) {
+  return buildSuggestionPool(personId, state.selectedGenericCategory);
+}
+
+function renderMealTemplateDraft() {
+  const picker = document.getElementById('mealTemplatePicker');
+  picker.hidden = !state.mealTemplatePickerOpen;
+  document.getElementById('mealTemplateName').value = state.mealTemplateDraft.name || '';
+  renderMealTemplateItems(state.mealTemplateDraft.items || []);
+  if (state.mealTemplatePickerOpen) {
+    const personId = document.getElementById('addPersonPicker').value || state.selectedPersonId;
+    const pool = personId ? mealTemplateSuggestionPool(personId) : [];
+    const query = (document.getElementById('mealTemplateSearchInput').value || '').trim().toLowerCase();
+    const filtered = query ? pool.filter((item) => item.label.toLowerCase().includes(query)) : pool;
+    renderMealTemplateSearchResults(filtered.slice(0, 30));
+  }
+}
+
+function resetMealTemplateDraft() {
+  state.mealTemplateDraft = { id: null, name: '', items: [] };
+  state.mealTemplatePickerOpen = false;
+  const search = document.getElementById('mealTemplateSearchInput');
+  if (search) search.value = '';
+}
+
+function openNewMealTemplateDialog() {
+  resetMealTemplateDraft();
+  openMealTemplateDialog();
+  renderMealTemplateDraft();
+}
+
+async function handleSaveMealTemplate(e) {
+  e.preventDefault();
+  const name = (document.getElementById('mealTemplateName').value || '').trim();
+  if (!name) {
+    window.alert('Please provide a meal name.');
+    return;
+  }
+  if (!(state.mealTemplateDraft.items || []).length) {
+    window.alert('Please add at least one item.');
+    return;
+  }
+
+  const items = state.mealTemplateDraft.items.map((item) => {
+    const grams = Number(item.gramsDefault);
+    return {
+      ...item,
+      gramsDefault: Number.isFinite(grams) && grams > 0 ? grams : 100
+    };
+  });
+
+  await upsertMealTemplate({
+    id: state.mealTemplateDraft.id || undefined,
+    name,
+    items
+  });
+
+  closeMealTemplateDialog();
+  resetMealTemplateDraft();
+  showAddStatus(`Saved meal template “${name}”.`);
+  await loadAndRender();
+}
+
+async function handleLogMealTemplate(templateId) {
+  const personId = document.getElementById('addPersonPicker').value || state.selectedPersonId;
+  if (!personId) {
+    window.alert('Create/select a person first.');
+    return;
+  }
+  const date = state.selectedDate;
+  const time = document.getElementById('addTime').value || nowTime();
+  const summary = await logMealTemplate({ personId, date, time, templateId });
+  showAddStatus(`Logged ${summary.count} meal items (${Math.round(summary.totalKcal)} kcal).`);
+  await loadAndRender();
+}
+
+
+async function openEditMealTemplateDialog(templateId) {
+  const template = await getMealTemplate(templateId);
+  if (!template) {
+    window.alert('Meal template not found.');
+    return;
+  }
+
+  state.mealTemplateDraft = {
+    id: template.id,
+    name: template.name,
+    items: (template.items || []).map((item) => ({
+      foodKey: item.foodKey,
+      label: item.label,
+      per100g: { ...item.per100g },
+      gramsDefault: item.gramsDefault
+    }))
+  };
+  state.mealTemplatePickerOpen = false;
+  const search = document.getElementById('mealTemplateSearchInput');
+  if (search) search.value = '';
+
+  openMealTemplateDialog();
+  renderMealTemplateDraft();
+}
+
+async function handleDuplicateMealTemplate(templateId) {
+  const template = await getMealTemplate(templateId);
+  if (!template) {
+    window.alert('Meal template not found.');
+    return;
+  }
+
+  const suffix = ' (copy)';
+  const baseName = String(template.name || 'Meal').trim();
+  const maxBaseLen = Math.max(1, 40 - suffix.length);
+  const copyName = `${baseName.slice(0, maxBaseLen)}${suffix}`;
+
+  await upsertMealTemplate({
+    name: copyName,
+    items: (template.items || []).map((item) => ({
+      foodKey: item.foodKey,
+      label: item.label,
+      per100g: { ...item.per100g },
+      gramsDefault: item.gramsDefault
+    }))
+  });
+
+  showAddStatus(`Duplicated meal template as “${copyName}”.`);
+  await loadAndRender();
+}
+
+async function handleDeleteMealTemplate(templateId) {
+  const template = await getMealTemplate(templateId);
+  if (!template) {
+    window.alert('Meal template not found.');
+    return;
+  }
+
+  const ok = window.confirm(`Delete meal template “${template.name}”?`);
+  if (!ok) return;
+
+  await deleteMealTemplate(templateId);
+  showAddStatus('Meal template deleted.');
+  await loadAndRender();
+}
+
 async function registerServiceWorker() {
+
   if (!('serviceWorker' in navigator)) return;
   try {
     await navigator.serviceWorker.register('./service-worker.js', { scope: './' });
@@ -828,6 +1104,28 @@ function wireEvents() {
   });
 
   document.getElementById('dashboardSummary').addEventListener('click', async (e) => {
+    const habitBtn = e.target.closest('button[data-action]');
+    if (habitBtn) {
+      const personId = state.selectedPersonId;
+      if (!personId) {
+        window.alert('Create/select a person first.');
+        return;
+      }
+      const action = habitBtn.dataset.action;
+      if (action === 'add-water-250' || action === 'add-water-500') {
+        const amountMl = action === 'add-water-250' ? 250 : 500;
+        await addWaterLog({ personId, date: state.selectedDate, amountMl });
+        await loadAndRender();
+        return;
+      }
+      if (action === 'add-exercise-10' || action === 'add-exercise-20') {
+        const minutes = action === 'add-exercise-10' ? 10 : 20;
+        await addExerciseLog({ personId, date: state.selectedDate, minutes });
+        await loadAndRender();
+        return;
+      }
+    }
+
     const btn = e.target.closest('button[data-macro-view]');
     if (!btn) return;
     const view = btn.dataset.macroView;
@@ -838,6 +1136,14 @@ function wireEvents() {
 
   document.getElementById('addPersonPicker').addEventListener('change', async (e) => {
     state.selectedPersonId = e.target.value || null;
+    const personId = state.selectedPersonId || state.persons[0]?.id || null;
+    if (personId && !state.dashboardLayoutByPerson[personId]) {
+      const savedLayout = await getMetaValue(getDashboardLayoutMetaKey(personId));
+      state.dashboardLayoutByPerson[personId] = normalizeDashboardLayout(savedLayout || DASHBOARD_LAYOUT_DEFAULT);
+    }
+    state.settingsDashboardLayoutDraft = normalizeDashboardLayout(
+      personId ? state.dashboardLayoutByPerson[personId] : DASHBOARD_LAYOUT_DEFAULT
+    );
     await loadAndRender();
   });
 
@@ -857,6 +1163,86 @@ function wireEvents() {
     const personId = document.getElementById('addPersonPicker').value || state.selectedPersonId;
     if (!personId) return;
     filterSuggestions(e.target.value, personId);
+  });
+
+  document.getElementById('mealTemplatesRow').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+
+    if (btn.dataset.action === 'new-meal-template') {
+      openNewMealTemplateDialog();
+      return;
+    }
+
+    const templateId = btn.dataset.templateId;
+    if (!templateId) return;
+
+    if (btn.dataset.action === 'log-meal-template') {
+      await handleLogMealTemplate(templateId);
+      return;
+    }
+
+    if (btn.dataset.action === 'edit-meal-template') {
+      await openEditMealTemplateDialog(templateId);
+      return;
+    }
+
+    if (btn.dataset.action === 'duplicate-meal-template') {
+      await handleDuplicateMealTemplate(templateId);
+      return;
+    }
+
+    if (btn.dataset.action === 'delete-meal-template') {
+      await handleDeleteMealTemplate(templateId);
+    }
+  });
+
+  document.getElementById('mealTemplateAddItemBtn').addEventListener('click', () => {
+    state.mealTemplatePickerOpen = !state.mealTemplatePickerOpen;
+    renderMealTemplateDraft();
+  });
+
+  document.getElementById('mealTemplateSearchInput').addEventListener('input', () => {
+    renderMealTemplateDraft();
+  });
+
+  document.getElementById('mealTemplateSearchResults').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action="select-meal-item"]');
+    if (!btn) return;
+    const personId = document.getElementById('addPersonPicker').value || state.selectedPersonId;
+    if (!personId) return;
+    const selected = mealTemplateSuggestionPool(personId).find((item) => item.foodId === btn.dataset.foodId);
+    if (!selected) return;
+    state.mealTemplateDraft.items.push(mealItemFromSuggestion(selected));
+    renderMealTemplateDraft();
+  });
+
+  document.getElementById('mealTemplateItems').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action="remove-meal-item"]');
+    if (!btn) return;
+    const index = Number(btn.dataset.index);
+    if (!Number.isFinite(index)) return;
+    state.mealTemplateDraft.items.splice(index, 1);
+    renderMealTemplateDraft();
+  });
+
+  document.getElementById('mealTemplateItems').addEventListener('input', (e) => {
+    const input = e.target.closest('input[data-action="meal-item-grams"]');
+    if (!input) return;
+    const index = Number(input.dataset.index);
+    const grams = Number(input.value);
+    if (!Number.isFinite(index) || !state.mealTemplateDraft.items[index]) return;
+    state.mealTemplateDraft.items[index].gramsDefault = grams;
+  });
+
+  document.getElementById('mealTemplateName').addEventListener('input', (e) => {
+    state.mealTemplateDraft.name = e.target.value || '';
+  });
+
+  document.getElementById('mealTemplateForm').addEventListener('submit', handleSaveMealTemplate);
+  document.getElementById('cancelMealTemplateBtn').addEventListener('click', () => {
+    closeMealTemplateDialog();
+    resetMealTemplateDraft();
   });
 
   document.getElementById('addSuggestions').addEventListener('click', handleAddSuggestionClick);
@@ -902,6 +1288,14 @@ function wireEvents() {
   document.getElementById('personForm').addEventListener('submit', handlePersonSave);
   document.getElementById('cancelEditBtn').addEventListener('click', () => fillPersonForm(null));
   document.getElementById('settingsPersons').addEventListener('click', handleSettingsActions);
+  document.getElementById('saveDashboardLayoutBtn').addEventListener('click', async () => {
+    try {
+      await handleSaveDashboardLayout();
+    } catch (error) {
+      console.error(error);
+      showSettingsDataStatus('Could not save dashboard layout.');
+    }
+  });
 
   document.getElementById('exportDataBtn').addEventListener('click', async () => {
     try {
